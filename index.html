@@ -32,6 +32,7 @@ const STORAGE_KEY = "maintenance_tasks_hodgson";
 const BACKUP_INDEX_KEY = "maintenance_backups_index";
 const SCHEDULED_KEY = "maintenance_scheduled_hodgson";
 const ANTHROPIC_KEY_STORAGE = "maintenance_anthropic_key";
+const CONTRACTORS_KEY = "maintenance_contractors_hodgson";
 
 const CATEGORIES = ["General Maintenance","Snow Removal","Building Issue","Inspection","Landscaping","Equipment","Resident/Suite","Other"];
 const STATUSES = ["Completed","In Progress","Outstanding","Deferred"];
@@ -63,6 +64,12 @@ const SEED_TASKS=[
   {id:"seed4",date:"2026-05-17",category:"Building Issue",title:"G-Bins 5 & 6 leaking",notes:"Both bins leak — emailed Tony re: green bins for food scraps",status:"Outstanding"},
   {id:"seed5",date:"2026-05-19",category:"Resident/Suite",title:"Unit 213 move-in",notes:"Posted the building, completed window repair entry forms",status:"Completed"},
   {id:"seed6",date:"2026-05-20",category:"Inspection",title:"A/C & MUA thermostats",notes:"With Sean from Master Mechanical — setting A/C & MUA thermostats",status:"In Progress"},
+];
+
+
+const SEED_CONTRACTORS=[
+  {id:"c1",name:"Sean",company:"Master Mechanical",trade:"HVAC / Mechanical",phone:"",email:"",notes:"A/C & MUA thermostat setup"},
+  {id:"c2",name:"Tony",company:"Area Manager",trade:"Property Management",phone:"",email:"",notes:"Green bin / food scraps program contact"},
 ];
 
 function ls(key,fallback=null){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fallback;}catch{return fallback;}}
@@ -109,8 +116,11 @@ function App(){
   const [apiKey,setApiKey]=useState(()=>ls(ANTHROPIC_KEY_STORAGE,""));
   const [showApiKey,setShowApiKey]=useState(false);
   const [apiKeyInput,setApiKeyInput]=useState("");
+  const [contractors,setContractors]=useState(()=>ls(CONTRACTORS_KEY)||SEED_CONTRACTORS);
+  const [showContractors,setShowContractors]=useState(false);
 
   useEffect(()=>{lsSet(SCHEDULED_KEY,scheduled);},[scheduled]);
+  useEffect(()=>{lsSet(CONTRACTORS_KEY,contractors);},[contractors]);
 
   useEffect(()=>{
     const thisWeek=getWeekStart(today());
@@ -248,9 +258,9 @@ function App(){
           </div>
           {/* Tabs */}
           <div style={{display:"flex"}}>
-            {[["log","Task Log"],["issues",`Issues (${issues.length})`],["report","Weekly Report"]].map(([v,label])=>(
+            {[["log","Task Log"],["issues",`Issues (${issues.length})`],["report","Weekly Report"],["contractors","Contractors"]].map(([v,label])=>(
               <button key={v} onClick={()=>v==="report"?generateReport():setView(v)}
-                style={{background:view===v?"#f5f2ed":"transparent",color:view===v?"#1c2b1e":"#8fbb9e",border:"none",padding:"7px 16px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",borderRadius:"6px 6px 0 0",fontWeight:view===v?"bold":"normal"}}>
+                style={{background:view===v?"#f5f2ed":"transparent",color:view===v?"#1c2b1e":"#8fbb9e",border:"none",padding:"7px 16px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",borderRadius:"6px 6px 0 0",fontWeight:view===v?"bold":"normal",whiteSpace:"nowrap"}}>
                 {label}
               </button>
             ))}
@@ -315,6 +325,16 @@ function App(){
               {report.text&&!report.loading&&<pre style={{margin:0,whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",fontSize:13,lineHeight:1.75,color:"#2a2a2a"}}>{report.text}</pre>}
             </div>
           </div>
+        )}
+
+        {view==="contractors"&&(
+          <ContractorsView
+            contractors={contractors}
+            onAdd={c=>setContractors(cs=>[{...c,id:genId()},...cs])}
+            onEdit={(id,c)=>setContractors(cs=>cs.map(x=>x.id===id?{...x,...c}:x))}
+            onDelete={id=>setContractors(cs=>cs.filter(x=>x.id!==id))}
+            showToast={showToast}
+          />
         )}
       </div>
 
@@ -489,6 +509,132 @@ function ScheduledModal({scheduled,onAdd,onDelete,onClose}){
             </div>
           ))}
       </div>
+    </div>
+  );
+}
+
+
+const TRADES=["HVAC / Mechanical","Plumbing","Electrical","Elevator","Fire & Safety","Landscaping","Snow Removal","Cleaning","General Contractor","Pest Control","Security","Property Management","Other"];
+
+function ContractorsView({contractors,onAdd,onEdit,onDelete,showToast}){
+  const iS={width:"100%",boxSizing:"border-box",border:"1.5px solid #d1c9bc",borderRadius:6,padding:"7px 10px",fontSize:13,fontFamily:"Georgia,serif",background:"#faf8f5",color:"#1a1a1a",outline:"none"};
+  const empty={name:"",company:"",trade:"HVAC / Mechanical",phone:"",email:"",notes:""};
+  const [showForm,setShowForm]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const [form,setForm]=useState(empty);
+  const [search,setSearch]=useState("");
+  const [filterTrade,setFilterTrade]=useState("All");
+
+  function openNew(){setForm(empty);setEditId(null);setShowForm(true);}
+  function openEdit(c){setForm({name:c.name,company:c.company,trade:c.trade,phone:c.phone,email:c.email,notes:c.notes});setEditId(c.id);setShowForm(true);}
+  function save(){
+    if(!form.name.trim()) return;
+    if(editId){onEdit(editId,form);showToast("Contractor updated");}
+    else{onAdd(form);showToast("Contractor added");}
+    setShowForm(false);
+  }
+
+  const filtered=contractors.filter(c=>{
+    if(filterTrade!=="All"&&c.trade!==filterTrade) return false;
+    const q=search.toLowerCase();
+    if(q&&!c.name.toLowerCase().includes(q)&&!c.company.toLowerCase().includes(q)&&!c.trade.toLowerCase().includes(q)) return false;
+    return true;
+  }).sort((a,b)=>a.trade.localeCompare(b.trade)||a.name.localeCompare(b.name));
+
+  // Group by trade
+  const groups={};
+  filtered.forEach(c=>{if(!groups[c.trade])groups[c.trade]=[];groups[c.trade].push(c);});
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <div>
+          <h2 style={{margin:"0 0 2px",fontSize:15,fontWeight:"normal"}}>Contractor Directory</h2>
+          <p style={{margin:0,color:"#888",fontSize:12}}>{contractors.length} contact{contractors.length!==1?"s":""} saved</p>
+        </div>
+        <button onClick={openNew} style={{background:"#4a7c59",color:"#fff",border:"none",borderRadius:6,padding:"8px 14px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",whiteSpace:"nowrap"}}>+ Add Contractor</button>
+      </div>
+
+      {/* Search & filter */}
+      <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:16,alignItems:"center"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search name, company…" style={{...iS,flex:"1 1 140px",minWidth:120}}/>
+        <select value={filterTrade} onChange={e=>setFilterTrade(e.target.value)} style={{...iS,width:"auto"}}>
+          <option value="All">All Trades</option>
+          {TRADES.map(t=><option key={t}>{t}</option>)}
+        </select>
+        {(filterTrade!=="All"||search)&&<button onClick={()=>{setFilterTrade("All");setSearch("");}} style={{...iS,width:"auto",cursor:"pointer",color:"#666"}}>Clear</button>}
+      </div>
+
+      {filtered.length===0
+        ?<div style={{textAlign:"center",color:"#999",padding:"48px 0",fontStyle:"italic"}}>No contractors found</div>
+        :Object.entries(groups).map(([trade,list])=>(
+          <div key={trade} style={{marginBottom:22}}>
+            <div style={{fontSize:10,fontWeight:"bold",letterSpacing:"0.12em",textTransform:"uppercase",color:"#4a7c59",borderBottom:"2px solid #4a7c59",paddingBottom:4,marginBottom:10}}>{trade}</div>
+            {list.map(c=>(
+              <div key={c.id} style={{background:"#fff",border:"1.5px solid #e0d8cc",borderRadius:9,padding:"13px 15px",marginBottom:8,display:"flex",gap:10,alignItems:"flex-start"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                    <span style={{fontWeight:"bold",fontSize:14,color:"#1a1a1a"}}>{c.name}</span>
+                    {c.company&&<span style={{fontSize:12,color:"#666"}}>{c.company}</span>}
+                  </div>
+                  <div style={{display:"flex",gap:12,marginTop:5,flexWrap:"wrap"}}>
+                    {c.phone&&(
+                      <a href={`tel:${c.phone}`} style={{fontSize:12,color:"#4a7c59",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}>
+                        📞 {c.phone}
+                      </a>
+                    )}
+                    {c.email&&(
+                      <a href={`mailto:${c.email}`} style={{fontSize:12,color:"#4a7c59",textDecoration:"none",display:"flex",alignItems:"center",gap:4}}>
+                        ✉ {c.email}
+                      </a>
+                    )}
+                  </div>
+                  {c.notes&&<div style={{fontSize:12,color:"#888",marginTop:4,lineHeight:1.5}}>{c.notes}</div>}
+                </div>
+                <div style={{display:"flex",gap:4,flexShrink:0}}>
+                  <button onClick={()=>openEdit(c)} style={{background:"none",border:"1px solid #ddd",borderRadius:5,padding:"3px 9px",fontSize:10,cursor:"pointer",color:"#666"}}>Edit</button>
+                  <button onClick={()=>{onDelete(c.id);showToast("Contractor removed","warn");}} style={{background:"none",border:"1px solid #fca5a5",borderRadius:5,padding:"3px 9px",fontSize:10,cursor:"pointer",color:"#ef4444"}}>✕</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+
+      {/* Add/Edit Modal */}
+      {showForm&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(20,28,20,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:14}}>
+          <div style={{background:"#fff",borderRadius:12,padding:24,width:"100%",maxWidth:460,boxShadow:"0 20px 60px rgba(0,0,0,0.2)",maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h3 style={{margin:0,fontSize:15,fontWeight:"normal",color:"#1c2b1e",fontFamily:"Georgia,serif"}}>{editId?"Edit Contractor":"Add Contractor"}</h3>
+              <button onClick={()=>setShowForm(false)} style={{background:"none",border:"none",fontSize:17,cursor:"pointer",color:"#aaa"}}>✕</button>
+            </div>
+            <div style={{display:"grid",gap:11}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+                <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3,letterSpacing:"0.08em"}}>Name *</label>
+                <input value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Contact name" style={iS} autoFocus/></div>
+                <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3,letterSpacing:"0.08em"}}>Company</label>
+                <input value={form.company} onChange={e=>setForm(f=>({...f,company:e.target.value}))} placeholder="Company name" style={iS}/></div>
+              </div>
+              <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3,letterSpacing:"0.08em"}}>Trade / Specialty</label>
+              <select value={form.trade} onChange={e=>setForm(f=>({...f,trade:e.target.value}))} style={iS}>
+                {TRADES.map(t=><option key={t}>{t}</option>)}
+              </select></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+                <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3,letterSpacing:"0.08em"}}>Phone</label>
+                <input type="tel" value={form.phone} onChange={e=>setForm(f=>({...f,phone:e.target.value}))} placeholder="780-000-0000" style={iS}/></div>
+                <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3,letterSpacing:"0.08em"}}>Email</label>
+                <input type="email" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="name@company.com" style={iS}/></div>
+              </div>
+              <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3,letterSpacing:"0.08em"}}>Notes</label>
+              <textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={2} placeholder="Services provided, contract details, preferred contact times…" style={{...iS,resize:"vertical"}}/></div>
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
+              <button onClick={()=>setShowForm(false)} style={{background:"none",border:"1.5px solid #ccc",borderRadius:6,padding:"7px 16px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>Cancel</button>
+              <button onClick={save} disabled={!form.name.trim()} style={{background:form.name.trim()?"#1c2b1e":"#aaa",color:"#fff",border:"none",borderRadius:6,padding:"7px 20px",fontSize:12,cursor:form.name.trim()?"pointer":"default",fontFamily:"Georgia,serif"}}>{editId?"Save Changes":"Add Contractor"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
