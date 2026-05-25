@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1c2b1e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Maintenance" />
+  <title>Maintenance Tracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Georgia, "Times New Roman", serif; background: #f5f2ed; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+const { useState, useEffect } = React;
+
+const PROPERTY = "1406 Hodgson Way NW";
+const STORAGE_KEY = "maintenance_tasks_hodgson";
+const BACKUP_INDEX_KEY = "maintenance_backups_index";
+const SCHEDULED_KEY = "maintenance_scheduled_hodgson";
+const ANTHROPIC_KEY_STORAGE = "maintenance_anthropic_key";
+
+const CATEGORIES = ["General Maintenance","Snow Removal","Building Issue","Inspection","Landscaping","Equipment","Resident/Suite","Other"];
+const STATUSES = ["Completed","In Progress","Outstanding","Deferred"];
+const STATUS_COLOR = {
+  "Completed":   {bg:"#d1fae5",text:"#065f46",dot:"#10b981"},
+  "In Progress": {bg:"#fef3c7",text:"#92400e",dot:"#f59e0b"},
+  "Outstanding": {bg:"#fee2e2",text:"#991b1b",dot:"#ef4444"},
+  "Deferred":    {bg:"#e5e7eb",text:"#374151",dot:"#9ca3af"},
+};
+
+function genId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2); }
+function today(){ return new Date().toISOString().split("T")[0]; }
+function formatDate(d){
+  if(!d) return "—";
+  return new Date(d+"T00:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"});
+}
+function getWeekStart(dateStr){
+  const d=new Date(dateStr+"T00:00:00");
+  const day=d.getDay();
+  const diff=(day===0)?-6:1-day;
+  d.setDate(d.getDate()+diff);
+  return d.toISOString().split("T")[0];
+}
+
+const SEED_TASKS=[
+  {id:"seed1",date:"2026-05-15",category:"Equipment",title:"Mower service",notes:"Cleaned, greased spindles",status:"Completed"},
+  {id:"seed2",date:"2026-05-15",category:"General Maintenance",title:"Bin fence area",notes:"Swept G-bin area, removed debris",status:"Completed"},
+  {id:"seed3",date:"2026-05-16",category:"Landscaping",title:"Fountain",notes:"Cleaned, filled, algaecide added",status:"Completed"},
+  {id:"seed4",date:"2026-05-17",category:"Building Issue",title:"G-Bins 5 & 6 leaking",notes:"Both bins leak — emailed Tony re: green bins for food scraps",status:"Outstanding"},
+  {id:"seed5",date:"2026-05-19",category:"Resident/Suite",title:"Unit 213 move-in",notes:"Posted the building, completed window repair entry forms",status:"Completed"},
+  {id:"seed6",date:"2026-05-20",category:"Inspection",title:"A/C & MUA thermostats",notes:"With Sean from Master Mechanical — setting A/C & MUA thermostats",status:"In Progress"},
+];
+
+function ls(key,fallback=null){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fallback;}catch{return fallback;}}
+function lsSet(key,val){try{localStorage.setItem(key,JSON.stringify(val));}catch{}}
+
+function downloadXLSX(tasks, filename){
+  const rows=tasks.map(t=>({Date:t.date,Category:t.category,Title:t.title,Notes:t.notes||"",Status:t.status}));
+  const ws=XLSX.utils.json_to_sheet(rows);
+  ws["!cols"]=[{wch:13},{wch:20},{wch:30},{wch:50},{wch:14}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Tasks");
+  XLSX.writeFile(wb,filename);
+}
+
+function saveBackup(tasks){
+  const now=new Date();
+  const label=now.toLocaleDateString("en-CA",{year:"numeric",month:"short",day:"numeric"});
+  const key="maintenance_backup_"+now.toISOString().split("T")[0];
+  try{
+    localStorage.setItem(key,JSON.stringify(tasks));
+    const index=ls(BACKUP_INDEX_KEY,[]); 
+    const updated=[{key,label,count:tasks.length,date:now.toISOString()},...index.filter(b=>b.key!==key)];
+    lsSet(BACKUP_INDEX_KEY,updated);
+    return label;
+  }catch{return null;}
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App(){
+  const [tasks,setTasks]=useState(()=>ls(STORAGE_KEY)||SEED_TASKS);
+  const [view,setView]=useState("log");
+  const [showForm,setShowForm]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const [filter,setFilter]=useState({status:"All",category:"All"});
+  const [form,setForm]=useState({date:today(),category:"General Maintenance",title:"",notes:"",status:"Completed"});
+  const [report,setReport]=useState({text:"",loading:false,error:"",drafting:false,draftDone:false,draftError:""});
+  const [searchQ,setSearchQ]=useState("");
+  const [toast,setToast]=useState(null);
+  const [savedFlash,setSavedFlash]=useState(false);
+  const [showNewWeekConfirm,setShowNewWeekConfirm]=useState(false);
+  const [backups,setBackups]=useState(()=>ls(BACKUP_INDEX_KEY,[]));
+  const [scheduled,setScheduled]=useState(()=>ls(SCHEDULED_KEY,[]));
+  const [showScheduled,setShowScheduled]=useState(false);
+  const [apiKey,setApiKey]=useState(()=>ls(ANTHROPIC_KEY_STORAGE,""));
+  const [showApiKey,setShowApiKey]=useState(false);
+  const [apiKeyInput,setApiKeyInput]=useState("");
+
+  useEffect(()=>{lsSet(SCHEDULED_KEY,scheduled);},[scheduled]);
+
+  useEffect(()=>{
+    const thisWeek=getWeekStart(today());
+    const due=scheduled.filter(t=>getWeekStart(t.date)<=thisWeek);
+    if(due.length>0){
+      setTasks(ts=>[...due,...ts]);
+      setScheduled(s=>s.filter(t=>getWeekStart(t.date)>thisWeek));
+      showToast(`${due.length} scheduled task${due.length>1?"s":""} added to this week`);
+    }
+  },[]);
+
+  useEffect(()=>{
+    lsSet(STORAGE_KEY,tasks);
+    setSavedFlash(true);
+    const t=setTimeout(()=>setSavedFlash(false),1500);
+    return()=>clearTimeout(t);
+  },[tasks]);
+
+  function showToast(msg,type="success"){setToast({msg,type});setTimeout(()=>setToast(null),2600);}
+
+  function openNew(){setForm({date:today(),category:"General Maintenance",title:"",notes:"",status:"Completed"});setEditId(null);setShowForm(true);}
+  function openEdit(task){setForm({date:task.date,category:task.category,title:task.title,notes:task.notes,status:task.status});setEditId(task.id);setShowForm(true);}
+
+  function saveForm(){
+    if(!form.title.trim()) return;
+    if(editId){setTasks(ts=>ts.map(t=>t.id===editId?{...t,...form}:t));showToast("Task updated");}
+    else{setTasks(ts=>[{...form,id:genId()},...ts]);showToast("Task added");}
+    setShowForm(false);
+  }
+
+  function deleteTask(id){setTasks(ts=>ts.filter(t=>t.id!==id));showToast("Task removed","warn");}
+
+  function cycleStatus(id){
+    setTasks(ts=>ts.map(t=>{
+      if(t.id!==id) return t;
+      return{...t,status:STATUSES[(STATUSES.indexOf(t.status)+1)%STATUSES.length]};
+    }));
+  }
+
+  function startNewWeek(){
+    const label=saveBackup(tasks);
+    const dateStr=new Date().toISOString().split("T")[0];
+    downloadXLSX(tasks,`Maintenance_Backup_${dateStr}.xlsx`);
+    const carry=tasks.filter(t=>t.status==="Outstanding"||t.status==="In Progress");
+    setTasks(carry);
+    setBackups(ls(BACKUP_INDEX_KEY,[]));
+    setShowNewWeekConfirm(false);
+    showToast(label?`Backed up & downloaded — ${carry.length} open item${carry.length!==1?"s":""} carried forward`:"New week started");
+  }
+
+  function exportToExcel(){
+    const now=new Date();
+    const dateStr=now.toISOString().split("T")[0];
+    const timeStr=now.toLocaleTimeString("en-CA",{hour:"2-digit",minute:"2-digit",hour12:false}).replace(":","");
+    downloadXLSX(tasks,`Maintenance_Tasks_${dateStr}_${timeStr}.xlsx`);
+    showToast("Tasks exported to Excel");
+  }
+
+  function saveApiKey(){
+    lsSet(ANTHROPIC_KEY_STORAGE,apiKeyInput.trim());
+    setApiKey(apiKeyInput.trim());
+    setShowApiKey(false);
+    showToast("API key saved");
+  }
+
+  const filtered=tasks.filter(t=>{
+    if(filter.status!=="All"&&t.status!==filter.status) return false;
+    if(filter.category!=="All"&&t.category!==filter.category) return false;
+    if(searchQ&&!t.title.toLowerCase().includes(searchQ.toLowerCase())&&!t.notes.toLowerCase().includes(searchQ.toLowerCase())) return false;
+    return true;
+  }).sort((a,b)=>b.date.localeCompare(a.date));
+
+  const issues=tasks.filter(t=>t.status==="Outstanding"||t.status==="In Progress");
+  const stats={
+    total:tasks.length,
+    completed:tasks.filter(t=>t.status==="Completed").length,
+    outstanding:tasks.filter(t=>t.status==="Outstanding").length,
+    inProgress:tasks.filter(t=>t.status==="In Progress").length,
+  };
+
+  async function generateReport(){
+    if(!apiKey){setShowApiKey(true);return;}
+    setView("report");
+    setReport({text:"",loading:true,error:"",drafting:false,draftDone:false,draftError:""});
+    const weekAgo=new Date();weekAgo.setDate(weekAgo.getDate()-7);
+    const weekTasks=tasks.filter(t=>new Date(t.date)>=weekAgo);
+    const outstanding=tasks.filter(t=>t.status==="Outstanding"||t.status==="In Progress");
+    const prompt=`You are a building maintenance manager for ${PROPERTY}, Edmonton, Alberta.\n\nWrite a professional weekly maintenance report email to management.\n\nTasks completed this week:\n${weekTasks.filter(t=>t.status==="Completed").map(t=>`- ${formatDate(t.date)}: [${t.category}] ${t.title} — ${t.notes||"No notes"}`).join("\n")||"None"}\n\nWork in progress:\n${weekTasks.filter(t=>t.status==="In Progress").map(t=>`- ${formatDate(t.date)}: [${t.category}] ${t.title} — ${t.notes||"No notes"}`).join("\n")||"None"}\n\nOutstanding issues:\n${outstanding.map(t=>`- [${t.category}] ${t.title} — ${t.notes||"No notes"} (logged ${formatDate(t.date)})`).join("\n")||"None"}\n\nWrite a clear email with greeting, completed work summary, outstanding issues, recommended follow-up, and sign-off from "Building Maintenance, ${PROPERTY}". Plain text, no markdown.`;
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,messages:[{role:"user",content:prompt}]})
+      });
+      const data=await res.json();
+      if(data.error){throw new Error(data.error.message);}
+      const text=data.content?.filter(b=>b.type==="text").map(b=>b.text).join("\n")||"";
+      setReport({text,loading:false,error:"",drafting:false,draftDone:false,draftError:""});
+    }catch(e){
+      setReport(r=>({...r,loading:false,error:`Error: ${e.message||"Could not generate report."}`}));
+    }
+  }
+
+  function copyReport(){navigator.clipboard.writeText(report.text);showToast("Copied to clipboard!");}
+
+  const iStyle={width:"100%",boxSizing:"border-box",border:"1.5px solid #d1c9bc",borderRadius:6,padding:"7px 10px",fontSize:13,fontFamily:"Georgia,serif",background:"#faf8f5",color:"#1a1a1a",outline:"none"};
+
+  return (
+    <div style={{fontFamily:"Georgia,'Times New Roman',serif",minHeight:"100vh",background:"#f5f2ed",color:"#1a1a1a"}}>
+
+      {/* Header */}
+      <div style={{background:"#1c2b1e",color:"#e8e0d0",padding:"14px 16px 0",borderBottom:"3px solid #4a7c59"}}>
+        <div style={{maxWidth:900,margin:"0 auto"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:"#8fbb9e"}}>Building Maintenance</div>
+              <h1 style={{margin:"2px 0 0",fontSize:15,fontWeight:"normal",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{PROPERTY}</h1>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0,flexWrap:"wrap"}}>
+              {savedFlash&&<span style={{fontSize:10,color:"#6ee7b7",letterSpacing:"0.08em"}}>✓ SAVED</span>}
+              <button onClick={exportToExcel} style={{background:"transparent",color:"#86efac",border:"1.5px solid #86efac",borderRadius:6,padding:"7px 11px",fontSize:11,cursor:"pointer",fontFamily:"Georgia,serif",whiteSpace:"nowrap"}}>⬇ Export</button>
+              <button onClick={()=>setShowNewWeekConfirm(true)} style={{background:"transparent",color:"#fcd34d",border:"1.5px solid #fcd34d",borderRadius:6,padding:"7px 11px",fontSize:11,cursor:"pointer",fontFamily:"Georgia,serif",whiteSpace:"nowrap"}}>📅 New Week</button>
+              <button onClick={()=>setShowScheduled(true)} style={{background:"transparent",color:"#93c5fd",border:"1.5px solid #93c5fd",borderRadius:6,padding:"7px 11px",fontSize:11,cursor:"pointer",fontFamily:"Georgia,serif",whiteSpace:"nowrap"}}>🗓 Scheduled{scheduled.length>0?` (${scheduled.length})`:""}</button>
+              <button onClick={openNew} style={{background:"#4a7c59",color:"#fff",border:"none",borderRadius:6,padding:"8px 14px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",whiteSpace:"nowrap"}}>+ Add Task</button>
+            </div>
+          </div>
+          {/* Stats */}
+          <div style={{display:"flex",gap:18,marginTop:10,paddingTop:8,borderTop:"1px solid #2e4230"}}>
+            {[{label:"Total",val:stats.total,col:"#8fbb9e"},{label:"Done",val:stats.completed,col:"#6ee7b7"},{label:"In Progress",val:stats.inProgress,col:"#fcd34d"},{label:"Outstanding",val:stats.outstanding,col:"#fca5a5"}].map(s=>(
+              <div key={s.label} style={{textAlign:"center",paddingBottom:8}}>
+                <div style={{fontSize:17,fontWeight:"bold",color:s.col,lineHeight:1}}>{s.val}</div>
+                <div style={{fontSize:9,color:"#8fbb9e",marginTop:2,letterSpacing:"0.08em"}}>{s.label.toUpperCase()}</div>
+              </div>
+            ))}
+          </div>
+          {/* Tabs */}
+          <div style={{display:"flex"}}>
+            {[["log","Task Log"],["issues",`Issues (${issues.length})`],["report","Weekly Report"]].map(([v,label])=>(
+              <button key={v} onClick={()=>v==="report"?generateReport():setView(v)}
+                style={{background:view===v?"#f5f2ed":"transparent",color:view===v?"#1c2b1e":"#8fbb9e",border:"none",padding:"7px 16px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",borderRadius:"6px 6px 0 0",fontWeight:view===v?"bold":"normal"}}>
+                {label}
+              </button>
+            ))}
+            <button onClick={()=>setShowApiKey(true)} style={{marginLeft:"auto",background:"transparent",color:apiKey?"#6ee7b7":"#9ca3af",border:"none",padding:"7px 12px",fontSize:11,cursor:"pointer",fontFamily:"Georgia,serif",paddingBottom:10}} title="API Key settings">
+              {apiKey?"🔑 API Connected":"🔑 Set API Key"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{maxWidth:900,margin:"0 auto",padding:"18px 14px"}}>
+
+        {view==="log"&&(
+          <div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+              <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search…" style={{...iStyle,flex:"1 1 130px",minWidth:110}}/>
+              <select value={filter.status} onChange={e=>setFilter(f=>({...f,status:e.target.value}))} style={{...iStyle,width:"auto"}}>
+                <option value="All">All Statuses</option>
+                {STATUSES.map(s=><option key={s}>{s}</option>)}
+              </select>
+              <select value={filter.category} onChange={e=>setFilter(f=>({...f,category:e.target.value}))} style={{...iStyle,width:"auto"}}>
+                <option value="All">All Categories</option>
+                {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+              </select>
+              {(filter.status!=="All"||filter.category!=="All"||searchQ)&&
+                <button onClick={()=>{setFilter({status:"All",category:"All"});setSearchQ("");}} style={{...iStyle,width:"auto",cursor:"pointer",color:"#666"}}>Clear</button>}
+            </div>
+            {filtered.length===0
+              ?<div style={{textAlign:"center",color:"#999",padding:"48px 0",fontStyle:"italic"}}>No tasks found</div>
+              :filtered.map(t=><TaskRow key={t.id} task={t} onEdit={openEdit} onDelete={deleteTask} onCycleStatus={cycleStatus}/>)}
+          </div>
+        )}
+
+        {view==="issues"&&(
+          <div>
+            <div style={{marginBottom:14}}>
+              <h2 style={{margin:"0 0 3px",fontSize:15,fontWeight:"normal"}}>Outstanding & In-Progress Issues</h2>
+              <p style={{margin:0,color:"#888",fontSize:12}}>Items requiring follow-up.</p>
+            </div>
+            {issues.length===0
+              ?<div style={{textAlign:"center",color:"#999",padding:"48px 0",fontStyle:"italic"}}>No outstanding issues — all clear!</div>
+              :issues.sort((a,b)=>{const o={"Outstanding":0,"In Progress":1};return(o[a.status]??2)-(o[b.status]??2)||b.date.localeCompare(a.date);}).map(t=><TaskRow key={t.id} task={t} onEdit={openEdit} onDelete={deleteTask} onCycleStatus={cycleStatus}/>)}
+          </div>
+        )}
+
+        {view==="report"&&(
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,flexWrap:"wrap",gap:8}}>
+              <div>
+                <h2 style={{margin:"0 0 2px",fontSize:15,fontWeight:"normal"}}>Weekly Management Report</h2>
+                <p style={{margin:0,color:"#888",fontSize:12}}>AI-generated — copy and paste into your email.</p>
+              </div>
+              <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
+                <button onClick={generateReport} style={{background:"#1c2b1e",color:"#e8e0d0",border:"none",borderRadius:6,padding:"7px 14px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>↺ Regenerate</button>
+                {report.text&&<button onClick={copyReport} style={{background:"#4a7c59",color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>Copy Email</button>}
+              </div>
+            </div>
+            <div style={{background:"#fff",border:"1.5px solid #d6cfc4",borderRadius:10,padding:"22px 26px",minHeight:160}}>
+              {report.loading&&<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10,padding:"24px 0",color:"#888"}}><div style={{width:26,height:26,border:"3px solid #e0d8ce",borderTop:"3px solid #4a7c59",borderRadius:"50%",animation:"spin 0.9s linear infinite"}}/><span style={{fontSize:12,fontStyle:"italic"}}>Composing your weekly report…</span></div>}
+              {report.error&&<div style={{color:"#dc2626",fontSize:13}}>{report.error}</div>}
+              {report.text&&!report.loading&&<pre style={{margin:0,whiteSpace:"pre-wrap",fontFamily:"Georgia,serif",fontSize:13,lineHeight:1.75,color:"#2a2a2a"}}>{report.text}</pre>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* API Key Modal */}
+      {showApiKey&&(
+        <Modal onClose={()=>setShowApiKey(false)} title="🔑 Anthropic API Key">
+          <p style={{fontSize:13,color:"#555",lineHeight:1.6,marginBottom:12}}>
+            The Weekly Report feature needs your Anthropic API key. Get one free at <strong>console.anthropic.com</strong>. It's stored only on this device.
+          </p>
+          {apiKey&&<div style={{background:"#d1fae5",borderRadius:6,padding:"8px 12px",fontSize:12,color:"#065f46",marginBottom:10}}>✓ API key is set</div>}
+          <input value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} placeholder="sk-ant-..." style={{...iStyle,marginBottom:10}}/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setShowApiKey(false)} style={{background:"none",border:"1.5px solid #ccc",borderRadius:6,padding:"7px 16px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>Cancel</button>
+            {apiKey&&<button onClick={()=>{lsSet(ANTHROPIC_KEY_STORAGE,"");setApiKey("");setShowApiKey(false);showToast("API key removed","warn");}} style={{background:"none",border:"1.5px solid #fca5a5",borderRadius:6,padding:"7px 14px",fontSize:12,cursor:"pointer",color:"#ef4444",fontFamily:"Georgia,serif"}}>Remove</button>}
+            <button onClick={saveApiKey} disabled={!apiKeyInput.trim()} style={{background:apiKeyInput.trim()?"#1c2b1e":"#aaa",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,cursor:apiKeyInput.trim()?"pointer":"default",fontFamily:"Georgia,serif"}}>Save Key</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Scheduled Tasks Modal */}
+      {showScheduled&&<ScheduledModal scheduled={scheduled} onAdd={task=>setScheduled(s=>[...s,{...task,id:genId()}])} onDelete={id=>setScheduled(s=>s.filter(t=>t.id!==id))} onClose={()=>setShowScheduled(false)}/>}
+
+      {/* New Week Confirm Modal */}
+      {showNewWeekConfirm&&(
+        <Modal onClose={()=>setShowNewWeekConfirm(false)} title="📅 Start New Week?">
+          <p style={{fontSize:13,color:"#555",lineHeight:1.6,marginBottom:8}}>This will <strong>back up all current tasks</strong> to a dated Excel file, then clear the task log.</p>
+          <p style={{fontSize:13,color:"#4a7c59",fontStyle:"italic",marginBottom:14}}>✓ Outstanding & In Progress items will be carried forward automatically.</p>
+          <div style={{background:"#fef3c7",borderRadius:8,padding:"9px 12px",marginBottom:16,fontSize:12,color:"#92400e"}}>
+            <strong>{tasks.filter(t=>t.status!=="Outstanding"&&t.status!=="In Progress").length}</strong> tasks will be archived &nbsp;·&nbsp;
+            <strong>{tasks.filter(t=>t.status==="Outstanding"||t.status==="In Progress").length}</strong> open items will carry forward
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+            <button onClick={()=>setShowNewWeekConfirm(false)} style={{background:"none",border:"1.5px solid #ccc",borderRadius:6,padding:"8px 20px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>Cancel</button>
+            <button onClick={startNewWeek} style={{background:"#1c2b1e",color:"#fcd34d",border:"none",borderRadius:6,padding:"8px 20px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif",fontWeight:"bold"}}>Back Up & Start New Week</button>
+          </div>
+          {backups.length>0&&(
+            <div style={{marginTop:16,borderTop:"1px solid #eee",paddingTop:12}}>
+              <div style={{fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"#aaa",marginBottom:6}}>Previous Backups</div>
+              {backups.slice(0,5).map(b=>(
+                <div key={b.key} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#666",padding:"3px 0",borderBottom:"1px solid #f5f5f5"}}>
+                  <span>📁 Week of {b.label}</span><span style={{color:"#aaa"}}>{b.count} tasks</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* Add/Edit Task Modal */}
+      {showForm&&(
+        <Modal onClose={()=>setShowForm(false)} title={editId?"Edit Task":"Add Task"}>
+          <div style={{display:"grid",gap:11}}>
+            <Field label="Date"><input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={iStyle}/></Field>
+            <Field label="Title"><input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="Brief task description" style={iStyle} autoFocus/></Field>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+              <Field label="Category"><select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))} style={iStyle}>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field>
+              <Field label="Status"><select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} style={iStyle}>{STATUSES.map(s=><option key={s}>{s}</option>)}</select></Field>
+            </div>
+            <Field label="Notes"><textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={3} placeholder="Details, follow-up actions, contractor info…" style={{...iStyle,resize:"vertical"}}/></Field>
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
+            <button onClick={()=>setShowForm(false)} style={{background:"none",border:"1.5px solid #ccc",borderRadius:6,padding:"7px 16px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>Cancel</button>
+            <button onClick={saveForm} disabled={!form.title.trim()} style={{background:form.title.trim()?"#1c2b1e":"#aaa",color:"#fff",border:"none",borderRadius:6,padding:"7px 20px",fontSize:12,cursor:form.title.trim()?"pointer":"default",fontFamily:"Georgia,serif"}}>{editId?"Save Changes":"Add Task"}</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Toast */}
+      {toast&&<div style={{position:"fixed",bottom:18,right:18,background:toast.type==="warn"?"#7f1d1d":"#1c2b1e",color:"#fff",borderRadius:8,padding:"10px 16px",fontSize:12,fontFamily:"Georgia,serif",boxShadow:"0 4px 20px rgba(0,0,0,0.25)",zIndex:200,animation:"fadeIn 0.2s ease"}}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+function TaskRow({task,onEdit,onDelete,onCycleStatus}){
+  const sc=STATUS_COLOR[task.status];
+  return(
+    <div style={{background:"#fff",border:"1.5px solid #e0d8cc",borderRadius:9,padding:"12px 14px",marginBottom:8,display:"flex",gap:11,alignItems:"flex-start"}}>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:"#888",fontStyle:"italic"}}>{formatDate(task.date)}</span>
+          <span style={{fontSize:11,background:"#f0ece5",color:"#6b6355",borderRadius:4,padding:"2px 6px"}}>{task.category}</span>
+        </div>
+        <div style={{fontWeight:"bold",fontSize:13,margin:"4px 0 2px",color:"#1a1a1a"}}>{task.title}</div>
+        {task.notes&&<div style={{fontSize:12,color:"#666",lineHeight:1.5}}>{task.notes}</div>}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+        <button onClick={()=>onCycleStatus(task.id)} style={{background:sc.bg,color:sc.text,border:"none",borderRadius:20,padding:"3px 10px",fontSize:11,cursor:"pointer",fontFamily:"Georgia,serif",display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+          <span style={{width:6,height:6,borderRadius:"50%",background:sc.dot,display:"inline-block"}}/>
+          {task.status}
+        </button>
+        <div style={{display:"flex",gap:4}}>
+          <button onClick={()=>onEdit(task)} style={{background:"none",border:"1px solid #ddd",borderRadius:5,padding:"3px 8px",fontSize:10,cursor:"pointer",color:"#666"}}>Edit</button>
+          <button onClick={()=>onDelete(task.id)} style={{background:"none",border:"1px solid #fca5a5",borderRadius:5,padding:"3px 8px",fontSize:10,cursor:"pointer",color:"#ef4444"}}>✕</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Modal({onClose,title,children}){
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(20,28,20,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:14}}>
+      <div style={{background:"#fff",borderRadius:12,padding:24,width:"100%",maxWidth:460,boxShadow:"0 20px 60px rgba(0,0,0,0.2)",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <h3 style={{margin:0,fontSize:15,fontWeight:"normal",color:"#1c2b1e",fontFamily:"Georgia,serif"}}>{title}</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:17,cursor:"pointer",color:"#aaa"}}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({label,children}){
+  return(
+    <div>
+      <label style={{display:"block",fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"#888",marginBottom:3,fontFamily:"Georgia,serif"}}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function ScheduledModal({scheduled,onAdd,onDelete,onClose}){
+  const mi={width:"100%",boxSizing:"border-box",border:"1.5px solid #d1c9bc",borderRadius:6,padding:"7px 10px",fontSize:12,fontFamily:"Georgia,serif",background:"#fff",color:"#1a1a1a",outline:"none"};
+  const empty={date:"",category:"General Maintenance",title:"",notes:"",status:"Completed"};
+  const [form,setForm]=useState(empty);
+  const [err,setErr]=useState("");
+  function add(){
+    if(!form.title.trim()){setErr("Please enter a title.");return;}
+    if(!form.date||form.date<=today()){setErr("Please pick a future date.");return;}
+    onAdd(form);setForm(empty);setErr("");
+  }
+  const sorted=[...scheduled].sort((a,b)=>a.date.localeCompare(b.date));
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(20,28,20,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:150,padding:14}}>
+      <div style={{background:"#fff",borderRadius:12,padding:24,width:"100%",maxWidth:500,boxShadow:"0 20px 60px rgba(0,0,0,0.25)",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div><h3 style={{margin:0,fontSize:15,fontWeight:"normal",color:"#1c2b1e",fontFamily:"Georgia,serif"}}>🗓 Scheduled Tasks</h3>
+          <p style={{margin:"2px 0 0",fontSize:11,color:"#888"}}>Tasks appear in the log automatically on their due week.</p></div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:17,cursor:"pointer",color:"#aaa"}}>✕</button>
+        </div>
+        <div style={{background:"#f8f6f2",borderRadius:8,padding:14,marginBottom:16}}>
+          <div style={{fontSize:10,letterSpacing:"0.1em",textTransform:"uppercase",color:"#888",marginBottom:10}}>Schedule a New Task</div>
+          <div style={{display:"grid",gap:9}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>
+              <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3}}>Due Date</label>
+              <input type="date" value={form.date} min={new Date(Date.now()+86400000).toISOString().split("T")[0]} onChange={e=>setForm(f=>({...f,date:e.target.value}))} style={mi}/></div>
+              <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3}}>Category</label>
+              <select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))} style={mi}>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></div>
+            </div>
+            <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3}}>Title</label>
+            <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="Task description" style={mi}/></div>
+            <div><label style={{display:"block",fontSize:10,textTransform:"uppercase",color:"#888",marginBottom:3}}>Notes</label>
+            <textarea value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={2} placeholder="Optional details…" style={{...mi,resize:"vertical"}}/></div>
+          </div>
+          {err&&<div style={{color:"#dc2626",fontSize:11,marginTop:6}}>{err}</div>}
+          <button onClick={add} style={{marginTop:10,background:"#1c2b1e",color:"#e8e0d0",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,cursor:"pointer",fontFamily:"Georgia,serif"}}>+ Schedule Task</button>
+        </div>
+        {sorted.length===0
+          ?<div style={{textAlign:"center",color:"#aaa",padding:"16px 0",fontStyle:"italic",fontSize:12}}>No scheduled tasks yet</div>
+          :sorted.map(t=>(
+            <div key={t.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",background:"#fafaf8",border:"1.5px solid #e8e2d8",borderRadius:8,marginBottom:7}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,fontWeight:"bold",color:"#3b82f6"}}>📅 {new Date(t.date+"T00:00:00").toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"numeric"})}</span>
+                  <span style={{fontSize:10,background:"#f0ece5",color:"#6b6355",borderRadius:4,padding:"2px 6px"}}>{t.category}</span>
+                </div>
+                <div style={{fontWeight:"bold",fontSize:12,margin:"3px 0 2px"}}>{t.title}</div>
+                {t.notes&&<div style={{fontSize:11,color:"#777"}}>{t.notes}</div>}
+              </div>
+              <button onClick={()=>onDelete(t.id)} style={{background:"none",border:"1px solid #fca5a5",borderRadius:5,padding:"3px 8px",fontSize:10,cursor:"pointer",color:"#ef4444",flexShrink:0}}>✕</button>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("sw.js").then(() => {
+          console.log("Service worker registered");
+        });
+      });
+    }
+  </script>
+</body>
+</html>
