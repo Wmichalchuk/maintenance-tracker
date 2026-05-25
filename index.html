@@ -68,8 +68,46 @@ const SEED_TASKS=[
 
 
 const SEED_CONTRACTORS=[
-  {id:"c1",name:"Sean",company:"Master Mechanical",trade:"HVAC / Mechanical",phone:"",email:"",notes:"A/C & MUA thermostat setup"},
-  {id:"c2",name:"Tony",company:"Area Manager",trade:"Property Management",phone:"",email:"",notes:"Green bin / food scraps program contact"},
+  {id:"c1",name:"Larlyn Property Management",company:"Larlyn Property Mngt",trade:"Property Management",phone:"780-242-7060",email:"",notes:"14315 118 Ave #144, Edmonton T5L 4S6"},
+  {id:"c2",name:"Consolidated Monitoring",company:"Consolidated Monitoring",trade:"Fire & Safety",phone:"780-488-3777",email:"",notes:"Fire Panel Monitoring - Acct# 52-4784"},
+  {id:"c3",name:"Ray",company:"ActsWest",trade:"Fire & Safety",phone:"780-446-0701",email:"",notes:"Fire Equipment Service"},
+  {id:"c4",name:"Commercial Lighting",company:"Commercial Lighting",trade:"Electrical",phone:"780-468-0999",email:"",notes:"Emergency Light Batteries - 8503 Davies Rd"},
+  {id:"c5",name:"Total Integration",company:"Total Integration",trade:"Security",phone:"780-444-7044",email:"",notes:"Cameras & Fobs"},
+  {id:"c6",name:"Pump & Pressure",company:"Pump & Pressure",trade:"Car Wash",phone:"780-430-9359",email:"",notes:"Car Wash"},
+  {id:"c7",name:"Dale Browne",company:"Browne & Sons",trade:"Stucco",phone:"780-699-1528",email:"",notes:"Dale direct: 780-818-5959"},
+  {id:"c8",name:"Verne",company:"Lydale Construction",trade:"Construction",phone:"780-777-0321",email:"",notes:"General construction"},
+  {id:"c9",name:"Brett Garden",company:"Garden Concrete",trade:"Concrete",phone:"780-818-7591",email:"",notes:""},
+  {id:"c10",name:"Gary Foux",company:"Guardian Chemicals",trade:"Chemicals / Supplies",phone:"780-998-3771",email:"",notes:""},
+  {id:"c11",name:"Clarence",company:"Springfresh Mats",trade:"Cleaning",phone:"780-446-5791",email:"",notes:"Door Mats"},
+  {id:"c12",name:"Dial Locksmith",company:"Dial Locksmith",trade:"Locksmith",phone:"780-420-6664",email:"",notes:""},
+  {id:"c13",name:"Dennis",company:"Homes by Tricolor",trade:"Painting & Renovation",phone:"780-405-5120",email:"",notes:""},
+  {id:"c14",name:"Service Master",company:"Service Master",trade:"Remediation",phone:"587-410-6037",email:"",notes:""},
+  {id:"c15",name:"Amsteam Restoration",company:"Amsteam Restoration",trade:"Remediation",phone:"780-487-0184",email:"",notes:"Remediation & Carpet Cleaning"},
+  {id:"c16",name:"Matt",company:"Revolution Electric",trade:"Electrical",phone:"780-918-9554",email:"",notes:""},
+  {id:"c17",name:"Thyssen Krupp",company:"Thyssen Krupp",trade:"Elevator",phone:"780-488-0976",email:"",notes:""},
+  {id:"c18",name:"Birch Fumigators",company:"Birch Fumigators",trade:"Pest Control",phone:"780-757-2999",email:"",notes:"Exterminator"},
+  {id:"c19",name:"Watson Pools",company:"Watson Pools",trade:"Fountain / Pool",phone:"780-478-3791",email:"",notes:"Fountain maintenance"},
+  {id:"c20",name:"Tony",company:"Waste Management",trade:"Garbage & Recycling",phone:"780-983-8331",email:"",notes:"Garbage & Recycle"},
+  {id:"c21",name:"The Garbage Man",company:"The Garbage Man",trade:"Garbage & Recycling",phone:"780-467-0278",email:"",notes:"Garbage Removal"},
+  {id:"c22",name:"SiteOne Landscape Supply",company:"SiteOne Landscape Supply",trade:"Landscaping",phone:"780-466-5200",email:"",notes:"Gravel & Supplies - 7mm washed rock"},
+  {id:"c23",name:"Luckis Exercise Equipment",company:"Luckis Exercise Equipment",trade:"Gym Equipment",phone:"780-423-1155",email:"",notes:""},
+  {id:"c24",name:"Percy Guiang",company:"Bee Clean",trade:"Cleaning",phone:"780-435-3355",email:"",notes:"Housekeeping"},
+  {id:"c25",name:"Premiere Group",company:"Premiere Group",trade:"Cleaning",phone:"",email:"dave@premieregrp.ca",notes:"Parkade Scrub"},
+  {id:"c26",name:"Century Plumbing",company:"Century Plumbing",trade:"Plumbing",phone:"780-417-4044",email:"",notes:""},
+  {id:"c27",name:"Kelly",company:"Dependable Heating",trade:"HVAC / Mechanical",phone:"780-920-9821",email:"",notes:"Mechanical & Heat Pumps - Kelly direct: 780-271-0158"},
+  {id:"c28",name:"Sean",company:"Master Mechanical",trade:"HVAC / Mechanical",phone:"",email:"",notes:"A/C & MUA thermostat setup"},
+  {id:"c29",name:"Chris",company:"Hydro-Tech Irrigation",trade:"Irrigation",phone:"780-922-6701",email:"",notes:""},
+  {id:"c30",name:"Marge",company:"Gorgeous Gardens",trade:"Landscaping",phone:"780-237-8750",email:"",notes:""},
+  {id:"c31",name:"TruGreen",company:"TruGreen",trade:"Landscaping",phone:"780-628-6409",email:"",notes:"Lawn Fertilizing"},
+  {id:"c32",name:"United Parking",company:"United Parking",trade:"Parking",phone:"1-844-869-6377",email:"",notes:"Visitor Parking"},
+  {id:"c33",name:"Abes Door Service",company:"Abes Door Service",trade:"Doors & Parkade",phone:"780-462-8745",email:"",notes:"Parkade O/H Door & Arm"},
+  {id:"c34",name:"Matt",company:"United Roofing",trade:"Roofing",phone:"780-267-2753",email:"",notes:"Roof & Drain Leaks"},
+  {id:"c35",name:"Brad",company:"Peak Sewer Clean",trade:"Plumbing",phone:"780-918-6696",email:"",notes:"Sewer Drain & Sump"},
+  {id:"c36",name:"Tri-Star",company:"Tri-Star",trade:"Plumbing",phone:"780-482-1232",email:"",notes:""},
+  {id:"c37",name:"Alumitec Glass",company:"Alumitec Glass",trade:"Windows & Doors",phone:"780-482-4990",email:"",notes:"Suite Door Replacement"},
+  {id:"c38",name:"Norman",company:"Grinders Tree Service",trade:"Landscaping",phone:"780-340-9093",email:"",notes:"Tree Removal"},
+  {id:"c39",name:"Wildlife Rehab",company:"Wildlife Rehab",trade:"Wildlife",phone:"780-914-4118",email:"",notes:""},
+  {id:"c40",name:"Knights Doors & Windows",company:"Knights Doors & Windows",trade:"Windows & Doors",phone:"780-457-3667",email:"",notes:""},
 ];
 
 function ls(key,fallback=null){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fallback;}catch{return fallback;}}
@@ -514,7 +552,7 @@ function ScheduledModal({scheduled,onAdd,onDelete,onClose}){
 }
 
 
-const TRADES=["HVAC / Mechanical","Plumbing","Electrical","Elevator","Fire & Safety","Landscaping","Snow Removal","Cleaning","General Contractor","Pest Control","Security","Property Management","Other"];
+const TRADES=["Car Wash", "Chemicals / Supplies", "Cleaning", "Concrete", "Construction", "Doors & Parkade", "Electrical", "Elevator", "Fire & Safety", "Fountain / Pool", "Garbage & Recycling", "Gym Equipment", "HVAC / Mechanical", "Irrigation", "Landscaping", "Locksmith", "Painting & Renovation", "Parking", "Pest Control", "Plumbing", "Property Management", "Remediation", "Roofing", "Security", "Stucco", "Wildlife", "Windows & Doors"];
 
 function ContractorsView({contractors,onAdd,onEdit,onDelete,showToast}){
   const iS={width:"100%",boxSizing:"border-box",border:"1.5px solid #d1c9bc",borderRadius:6,padding:"7px 10px",fontSize:13,fontFamily:"Georgia,serif",background:"#faf8f5",color:"#1a1a1a",outline:"none"};
